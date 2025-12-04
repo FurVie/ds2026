@@ -1,0 +1,249 @@
+\documentclass[12pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{caption}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!5},
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  stringstyle=\color{purple}
+}
+
+\title{Practical Work 3: MPI File Transfer }
+\author{Pham Hoang Viet\\ID: 23BI14452}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Goal}
+
+The goal of this practical work is to upgrade the TCP file transfer
+system into a file transfer system using MPI. The new system must:
+
+\begin{itemize}
+    \item use MPI as the communication layer;
+    \item keep a one-to-many file transfer model (one sender, multiple receivers);
+    \item transfer real file data, not only messages or numbers;
+    \item be controlled from the command line.
+\end{itemize}
+
+\section{Choice of MPI Implementation}
+
+The implementation uses the standard MPI-3 interface provided by Open~MPI
+(or MPICH). The reasons for this choice are:
+
+\begin{itemize}
+    \item MPI is widely available on Unix-like systems and clusters;
+    \item \texttt{mpic++} integrates easily with C++ code;
+    \item collective communication primitives such as \texttt{MPI\_Bcast}
+          fit naturally with the file broadcast requirement (one sender,
+          multiple receivers);
+    \item the same code can run on a single machine or on a cluster
+          without modification.
+\end{itemize}
+
+\section{MPI Service Design}
+
+\subsection*{Communication Pattern}
+
+The file transfer is designed as a broadcast service:
+
+\begin{itemize}
+    \item process with rank~0 is the \textbf{root} (sender);
+    \item all processes with rank~$>0$ are \textbf{receivers};
+    \item the root reads a file from disk and broadcasts:
+          \begin{enumerate}
+              \item the file name;
+              \item the file size;
+              \item the file content.
+          \end{enumerate}
+    \item each receiver writes a local copy of the file.
+\end{itemize}
+
+\subsection*{Design Figure}
+
+\begin{figure}[h]
+  \centering
+  \fbox{\parbox{0.9\textwidth}{
+  \centering
+  \textbf{MPI Broadcast File Transfer}\\[4pt]
+  Rank~0 (root): read file from disk $\rightarrow$ broadcast metadata and data.\\
+  Ranks~1..N-1: receive filename and bytes $\rightarrow$ write local file.\\[4pt]
+  Communication is implemented using \texttt{MPI\_Bcast} for:
+  file name, file size, and file content.
+  }}
+  \caption{High-level design of the MPI broadcast file transfer.}
+  \label{fig:mpi-design}
+\end{figure}
+
+\section{System Organization}
+
+The system is organized into a single C++ program \texttt{mpi.cc} that
+runs with multiple MPI processes. Its behavior depends on the rank
+obtained from \texttt{MPI\_Comm\_rank()}.
+
+\begin{itemize}
+    \item \textbf{Root process (rank 0)}:
+          \begin{itemize}
+              \item parses the input file name from the command line;
+              \item reads the whole file into memory;
+              \item broadcasts the file name as a character array;
+              \item broadcasts the file size as an integer;
+              \item broadcasts the file content as a byte array.
+          \end{itemize}
+    \item \textbf{Receiver processes (rank $>0$)}:
+          \begin{itemize}
+              \item receive the file name, size, and content;
+              \item write the content into a file named
+                    \texttt{received\_rankX\_filename};
+              \item confirm completion by printing a local message.
+          \end{itemize}
+\end{itemize}
+
+\begin{figure}[h]
+  \centering
+  \fbox{\parbox{0.9\textwidth}{
+  \centering
+  \textbf{System Organization}\\[4pt]
+  Single source file: \texttt{mpi.cc}.\\
+  MPI rank~0 executes ``sender role''.\\
+  MPI ranks~1..N-1 execute ``receiver role''.\\
+  All processes share the same executable, but the control flow is
+  separated by rank.
+  }}
+  \caption{Organization of the MPI file transfer program.}
+  \label{fig:mpi-org}
+\end{figure}
+
+\section{Implementation Details}
+
+\subsection{Core File Transfer Logic (Code Snippet)}
+
+The essential code reads the file (on the root), broadcasts metadata,
+and writes the file (on the receivers). The following snippet shows the
+main logic in \texttt{mpi.cc}:
+
+\begin{lstlisting}[language=C++,caption={Core MPI broadcast file transfer snippet.}]
+MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+MPI_Comm_size(MPI_COMM_WORLD, &size);
+const int ROOT = 0;
+
+// --- Step 1: broadcast file name ---
+std::string filename;
+std::vector<char> nameBuf;
+int nameLen = 0;
+
+if (rank == ROOT) {
+    filename = argv[1];
+    nameBuf.assign(filename.begin(), filename.end());
+    nameBuf.push_back('\0');
+    nameLen = static_cast<int>(nameBuf.size());
+}
+MPI_Bcast(&nameLen, 1, MPI_INT, ROOT, MPI_COMM_WORLD);
+if (rank != ROOT) {
+    nameBuf.resize(nameLen);
+}
+MPI_Bcast(nameBuf.data(), nameLen, MPI_CHAR, ROOT, MPI_COMM_WORLD);
+if (rank != ROOT) {
+    filename = std::string(nameBuf.data());
+}
+
+// --- Step 2: root reads file ---
+int fileSize = 0;
+std::vector<char> buffer;
+
+if (rank == ROOT) {
+    std::ifstream in(filename, std::ios::binary);
+    in.seekg(0, std::ios::end);
+    fileSize = static_cast<int>(in.tellg());
+    in.seekg(0, std::ios::beg);
+    buffer.resize(fileSize);
+    in.read(buffer.data(), fileSize);
+    in.close();
+}
+
+MPI_Bcast(&fileSize, 1, MPI_INT, ROOT, MPI_COMM_WORLD);
+if (rank != ROOT) {
+    buffer.resize(fileSize);
+}
+
+// --- Step 3: broadcast file content ---
+MPI_Bcast(buffer.data(), fileSize, MPI_CHAR, ROOT, MPI_COMM_WORLD);
+
+// --- Step 4: receivers write file ---
+if (rank != ROOT) {
+    std::string outName =
+        "received_rank" + std::to_string(rank) + "_" + filename;
+    std::ofstream out(outName, std::ios::binary);
+    out.write(buffer.data(), fileSize);
+    out.close();
+}
+\end{lstlisting}
+
+The complete program also includes initialization and finalization:
+
+\begin{lstlisting}[language=C++,caption={Program initialization and finalization.}]
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+    // ... logic shown above ...
+    MPI_Finalize();
+    return 0;
+}
+\end{lstlisting}
+
+\section{Execution and Testing}
+
+The program is compiled using \texttt{mpic++} and executed with
+\texttt{mpirun}.
+
+\subsection*{Compilation}
+
+\begin{lstlisting}[language=bash]
+mpic++ mpi.cc -o mpi_file_transfer
+\end{lstlisting}
+
+\subsection*{Running the Program}
+
+The root process (rank 0) takes the file name as a command-line
+argument:
+
+\begin{lstlisting}[language=bash]
+mpirun -np 4 ./mpi_file_transfer example_file.txt
+\end{lstlisting}
+
+After execution:
+
+\begin{itemize}
+    \item rank~0 prints how many bytes were read from the original file;
+    \item each receiver rank ($1 \ldots 3$ in this example) writes a file
+          named \texttt{received\_rankX\_example\_file.txt};
+    \item the contents of each output file match the original file.
+\end{itemize}
+
+\section{Conclusion}
+
+This practical work implements a simple yet complete MPI-based file
+transfer system using broadcast. The design uses collective
+communication to distribute a file from one root process to all other
+processes in the communicator. The implementation demonstrates:
+
+\begin{itemize}
+    \item reading and writing binary files in C++;
+    \item broadcasting metadata (file name and size) with MPI;
+    \item broadcasting arbitrary binary content using \texttt{MPI\_Bcast};
+    \item organizing a single MPI program into sender and receiver roles
+          based on process rank.
+\end{itemize}
+
+The broadcast approach is straightforward and scalable, and can be
+extended with features such as checksum verification, chunked transfer,
+and selective distribution to a subset of processes.
+
+\end{document}
