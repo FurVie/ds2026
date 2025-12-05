@@ -1,0 +1,242 @@
+\documentclass[12pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{caption}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!5},
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  stringstyle=\color{purple}
+}
+
+\title{Practical Work 4: Word Count}
+\author{Pham Hoang Viet\\ID: 23BI14452}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Goal}
+
+The objective of this practical work is to implement a Word Count
+application using a MapReduce approach. A new directory named
+\texttt{WordCount} is created and a simple MapReduce framework is
+implemented in C++ without relying on any external library.
+
+The system must:
+
+\begin{itemize}
+    \item read an input text file;
+    \item split the processing into a \emph{map} and a \emph{reduce} phase;
+    \item count the number of occurrences of each distinct word;
+    \item output the result as \texttt{word count} pairs to a file.
+\end{itemize}
+
+\section{Choice of MapReduce Implementation}
+
+The implementation is written in C++17 and uses:
+
+\begin{itemize}
+    \item \texttt{std::thread} to simulate parallel mappers and reducers;
+    \item \texttt{std::unordered\_map} to store intermediate key--value pairs;
+    \item \texttt{std::hash<std::string>} to assign keys to reducers.
+\end{itemize}
+
+\section{Design of the MapReduce Service}
+
+\subsection*{Map Phase}
+
+The input file is read entirely into memory and partitioned into
+\emph{chunks}. Each chunk is processed by a mapper thread. A mapper:
+
+\begin{itemize}
+    \item splits the text chunk into words;
+    \item normalizes each word (lowercasing, removing punctuation);
+    \item emits intermediate key--value pairs $(\textit{word}, 1)$;
+    \item stores results in a local \texttt{unordered\_map}.
+\end{itemize}
+
+\subsection*{Shuffle Phase}
+
+All intermediate results are then redistributed to reducers:
+
+\begin{itemize}
+    \item each word is assigned to a reducer index using the hash of the
+          word modulo the number of reducers;
+    \item for each reducer, a vector of $(\textit{word}, \textit{count})$
+          pairs is built.
+\end{itemize}
+
+\subsection*{Reduce Phase}
+
+Each reducer thread receives a list of pairs and:
+
+\begin{itemize}
+    \item aggregates counts for each word;
+    \item produces a local map from word to total count;
+    \item the main thread finally merges all reducer outputs into a
+          single final map of word counts.
+\end{itemize}
+
+\subsection*{Design Figure}
+
+\begin{figure}[h]
+  \centering
+  \fbox{\parbox{0.9\textwidth}{
+  \centering
+  \textbf{MapReduce Word Count Design}\\[4pt]
+  Input file $\rightarrow$ split into chunks.\\
+  Each chunk $\rightarrow$ processed by a Mapper thread $\rightarrow$ local word counts.\\
+  Shuffle step groups words by hash(word) mod \#reducers.\\
+  Each Reducer thread aggregates counts for its assigned words.\\
+  Final stage merges reducer outputs and writes \texttt{word count} pairs.
+  }}
+  \caption{Overall design of the MapReduce Word Count system.}
+  \label{fig:design}
+\end{figure}
+
+\section{System Organization}
+
+The system consists of a single executable \texttt{wordcount} built from
+\texttt{wordcount.cpp}. The program is executed as:
+
+\begin{lstlisting}[language=bash]
+./wordcount input.txt output.txt [num_mappers] [num_reducers]
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{Input module}: reads the entire file into a string.
+    \item \textbf{Map module}: spawns mapper threads and stores per-mapper
+          \texttt{unordered\_map} objects.
+    \item \textbf{Shuffle module}: redistributes intermediate data into a
+          vector of lists, one per reducer.
+    \item \textbf{Reduce module}: spawns reducer threads and aggregates
+          counts.
+    \item \textbf{Output module}: sorts the final map by word and writes
+          the result to the output file.
+\end{itemize}
+
+\section{Implementation of the File Transfer}
+
+\subsection*{Mapper and Reducer Implementation}
+
+\begin{lstlisting}[language=C++]
+using MapperOutput = std::unordered_map<std::string, int>;
+using ReducerOutput = std::unordered_map<std::string, int>;
+
+void mapper_worker(const std::string &chunk, MapperOutput &out_map) {
+    auto words = split_words(chunk);
+    for (const auto &w : words) {
+        ++out_map[w];
+    }
+}
+
+void reducer_worker(const std::vector<std::pair<std::string, int>> &pairs,
+                    ReducerOutput &out_map) {
+    for (const auto &p : pairs) {
+        out_map[p.first] += p.second;
+    }
+}
+\end{lstlisting}
+
+\subsection*{Main Control Flow}
+
+\begin{lstlisting}[language=C++]
+int main(int argc, char **argv) {
+    std::string input_file = argv[1];
+    std::string output_file = argv[2];
+    int num_mappers = std::stoi(argv[3]);
+    int num_reducers = std::stoi(argv[4]);
+
+    std::ifstream in(input_file);
+    std::string text((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    in.close();
+
+    std::vector<std::thread> mapper_threads;
+    std::vector<MapperOutput> mapper_outputs(num_mappers);
+
+    size_t chunk_size = text.size() / num_mappers;
+    size_t start = 0;
+
+    for (int i = 0; i < num_mappers; ++i) {
+        size_t end = (i == num_mappers - 1) ? text.size() : start + chunk_size;
+        std::string chunk = text.substr(start, end - start);
+        mapper_threads.emplace_back(mapper_worker, chunk,
+                                    std::ref(mapper_outputs[i]));
+        start = end;
+    }
+
+    for (auto &t : mapper_threads) t.join();
+
+    std::vector<std::vector<std::pair<std::string, int>>> reducer_inputs(num_reducers);
+
+    for (const auto &m_out : mapper_outputs) {
+        for (const auto &kv : m_out) {
+            size_t h = std::hash<std::string>{}(kv.first);
+            int rid = static_cast<int>(h % num_reducers);
+            reducer_inputs[rid].emplace_back(kv.first, kv.second);
+        }
+    }
+
+    std::vector<std::thread> reducer_threads;
+    std::vector<ReducerOutput> reducer_outputs(num_reducers);
+
+    for (int r = 0; r < num_reducers; ++r) {
+        reducer_threads.emplace_back(reducer_worker,
+                                     std::cref(reducer_inputs[r]),
+                                     std::ref(reducer_outputs[r]));
+    }
+
+    for (auto &t : reducer_threads) t.join();
+
+    std::unordered_map<std::string, int> final_counts;
+    for (const auto &r_out : reducer_outputs) {
+        for (const auto &kv : r_out) {
+            final_counts[kv.first] += kv.second;
+        }
+    }
+
+    std::vector<std::pair<std::string, int>> sorted(final_counts.begin(),
+                                                    final_counts.end());
+    std::sort(sorted.begin(), sorted.end());
+
+    std::ofstream out(output_file);
+    for (const auto &kv : sorted) {
+        out << kv.first << " " << kv.second << "\n";
+    }
+    out.close();
+
+    return 0;
+}
+\end{lstlisting}
+
+The full implementation is contained in \texttt{wordcount.cpp} and
+includes word normalization, command-line parsing, and error handling.
+
+\section{Conclusion}
+
+This practical work demonstrates how a simple MapReduce-style framework
+can be implemented directly in C++ using threads, hash maps, and basic
+data structures. The Word Count example shows:
+
+\begin{itemize}
+    \item how to separate the application into map, shuffle, and reduce
+          phases;
+    \item how to use multiple threads to process different chunks of the
+          input text in parallel;
+    \item how to design a simple key-based partitioning scheme for
+          reducers.
+\end{itemize}
+
+The same structure can be extended to other problems that can be
+expressed in the MapReduce model, such as inverted index construction or
+log aggregation.
+
+\end{document}
