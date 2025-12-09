@@ -20,6 +20,12 @@
 \usepackage{color}
 \usetikzlibrary{shapes.geometric, arrows}
 
+
+\titleformat{\section}
+  {\normalfont\Large\bfseries\raggedright}{\thesection}{1em}{}
+\titleformat{\subsection}
+  {\normalfont\large\bfseries\raggedright}{\thesubsection}{1em}{}
+
 \tikzstyle{process} = [rectangle, minimum width=3cm, minimum height=1cm, text centered, draw=black, fill=blue!30]
 \tikzstyle{arrow} = [thick,->,>=stealth]
 
@@ -67,26 +73,26 @@
         ($(current page.north east) - (0.5in, 0.5in)$);
 \end{tikzpicture}
 
-% --- University Name ---
+
 \begin{center}
     \vspace{1cm}
     {\Large \textbf{University of Science and Technology of Hanoi}}\\[0.75cm]
 
-    % --- University Logo ---
+    
     \includegraphics[width=0.5\textwidth]{usth.png}
 
     \vspace{1cm}
     {\large \textbf{Distributed System}}\\[0.5cm]
     {\large \textbf{Midterm report}}\\[0.5cm]
 
-    % --- Assignment Title ---
+    
     \vspace{0.8cm}
     \rule{\textwidth}{0.75pt} \\[0.3cm]
     {\huge \textbf{HTTP over MPI}}\\[0.3cm]
     \rule{\textwidth}{0.75pt} \\[1.5cm]
 \end{center}
 
-% --- Student Information ---
+
 \vspace{1cm}
 \noindent
 \begin{tabular}{>{\bfseries}l @{\hskip 0.5cm} c @{\hskip 0.5cm} l}
@@ -212,6 +218,21 @@ mpirun -np 2 ./http_proxy_mpi test.txt
 
 #define BUFFER_SIZE 4096
 
+size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    char *response_buffer = (char *)userp;
+
+    if (realsize >= BUFFER_SIZE) {
+        printf("Warning: Response too large, truncating...\n");
+        realsize = BUFFER_SIZE - 1;
+    }
+
+    memcpy(response_buffer, contents, realsize);
+    response_buffer[realsize] = 0;
+
+    return realsize;
+}
+
 void send_http_request(const char* request, char* response) {
     CURL* curl;
     CURLcode res;
@@ -224,16 +245,17 @@ void send_http_request(const char* request, char* response) {
     }
 
     curl_easy_setopt(curl, CURLOPT_URL,
-        "https://webhook.site/e5022f2e-5e9a-4290-9f06-cb1c906a5d78");
+        "https://webhook.site/d5ea60ce-050e-47c7-b77c-bd16907f0665");
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, memcpy);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
 
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
         fprintf(stderr, "curl_easy_perform() failed: %s\n",
                 curl_easy_strerror(res));
-        strcpy(response, "HTTP request failed");
+        sprintf(response, "HTTP request failed: %s",
+                curl_easy_strerror(res));
     }
 
     curl_easy_cleanup(curl);
@@ -265,12 +287,13 @@ int main(int argc, char** argv) {
 
     if (world_rank == 0) {
         char http_request[BUFFER_SIZE] = {0};
-
+        
         if (argc == 2) {
             read_file_to_buffer(argv[1], http_request);
             printf("Client is sending file content: %s\n", http_request);
         } else {
-            printf("Enter a message to send: ");
+            printf("Enter a message to send:\n");
+            fflush(stdout);
             fgets(http_request, BUFFER_SIZE, stdin);
             http_request[strcspn(http_request, "\n")] = 0;
         }
@@ -303,69 +326,56 @@ int main(int argc, char** argv) {
 \end{lstlisting}
 
 \subsection{Header Files and Definitions}
-The code begins by including the necessary libraries:
+The program includes:
 \begin{itemize}
-    \item \texttt{mpi.h}: Provides the MPI functionalities.
-    \item \texttt{stdio.h}: Standard input/output for printing logs and error messages.
-    \item \texttt{stdlib.h}: Standard library for memory allocation and other utilities.
-    \item \texttt{string.h}: For string manipulation.
-    \item \texttt{curl/curl.h}: The libcurl library for making HTTP requests.
+    \item \texttt{mpi.h}: MPI primitives for distributed communication.
+    \item \texttt{stdio.h}, \texttt{stdlib.h}, \texttt{string.h}: standard C I/O and utilities.
+    \item \texttt{curl/curl.h}: libcurl API for HTTP requests.
 \end{itemize}
+\texttt{BUFFER\_SIZE} defines the maximum size of request and response buffers. A custom callback \texttt{write\_callback} is defined to safely receive HTTP response data without overflowing the buffer.
 
-A constant \texttt{BUFFER\_SIZE} is defined to allocate memory for the HTTP request and response.
+\subsection{The \texttt{write\_callback} and \texttt{send\_http\_request} Functions}
+\texttt{write\_callback} is registered as the libcurl write function. It computes the size of the incoming chunk, truncates it if necessary, copies it into the response buffer, and appends a null terminator.
 
-\subsection{The \texttt{send\_http\_request} Function}
-This function is responsible for sending an HTTP POST request to the HTTP server using libcurl:
-\begin{itemize}
-    \item initializes a libcurl handle;
-    \item configures URL, payload and write callback;
-    \item performs the request and handles errors;
-    \item copies the response body into the provided buffer.
-\end{itemize}
+\texttt{send\_http\_request} initializes a CURL handle, sets the webhook URL and POST data, registers \texttt{write\_callback}, performs the HTTP request, reports errors, and cleans up.
 
 \subsection{The \texttt{read\_file\_to\_buffer} Function}
-This function reads the contents of a file into a buffer:
-\begin{itemize}
-    \item opens the file in read mode;
-    \item reads the content into a buffer (up to \texttt{BUFFER\_SIZE});
-    \item null-terminates and closes the file.
-\end{itemize}
+\texttt{read\_file\_to\_buffer} opens a file, reads up to \texttt{BUFFER\_SIZE - 1} bytes, null-terminates the result, and closes the file. It is used when the client is launched with a filename as command-line argument.
 
 \subsection{The \texttt{main} Function}
-The \texttt{main} function initializes MPI, checks the number of processes, and assigns roles:
-\begin{itemize}
-    \item \textbf{Client} (rank 0): reads from a file if provided, otherwise asks the user for input; sends the HTTP request and waits for a response.
-    \item \textbf{Proxy} (rank 1): receives the request, forwards it via \texttt{send\_http\_request}, and sends the HTTP response back to the client.
-\end{itemize}
+The \texttt{main} function initializes MPI, checks that at least two processes exist, and then runs the client on rank~0 and the proxy on rank~1.
 
 \section{Flow of Execution}
-\subsection{Client Process}
+
+\subsection{Client Process (Rank 0)}
 \begin{itemize}
-    \item determines the request body (file or interactive input);
-    \item sends the HTTP request to the proxy via MPI;
-    \item receives and prints the HTTP response from the proxy.
+    \item If a filename is given (\texttt{argc == 2}), the client loads the file content into \texttt{http\_request}; otherwise it prompts the user to enter a message and flushes \texttt{stdout} so the prompt is visible immediately.
+    \item The client sends the request to rank~1 with \texttt{MPI\_Send}.
+    \item The client waits for the response from rank~1 with \texttt{MPI\_Recv} and prints it.
 \end{itemize}
 
-\subsection{Proxy Process}
+\subsection{Proxy Process (Rank 1)}
 \begin{itemize}
-    \item receives the HTTP request from the client via MPI;
-    \item forwards the request to the HTTP server using libcurl;
-    \item sends the HTTP response back to the client.
+    \item The proxy receives the request from rank~0.
+    \item It calls \texttt{send\_http\_request}, which forwards the payload to the configured webhook URL and stores the HTTP response in \texttt{http\_response}.
+    \item The proxy sends the response back to the client via \texttt{MPI\_Send}.
 \end{itemize}
 
 \section{Error Handling}
-Error handling is done at key points:
+Error handling occurs at several levels:
 \begin{itemize}
-    \item if \texttt{curl\_easy\_init} fails, an error message is returned;
-    \item if the HTTP request fails, the libcurl error string is printed;
-    \item if the MPI world size is less than 2, the program aborts.
+    \item If \texttt{world\_size < 2}, the program prints an error and calls \texttt{MPI\_Abort}.
+    \item If a file cannot be opened in \texttt{read\_file\_to\_buffer}, an error message is printed to \texttt{stderr}.
+    \item If libcurl cannot be initialized, \texttt{send\_http\_request} writes a descriptive error into the response buffer.
+    \item If \texttt{curl\_easy\_perform} fails, the libcurl error string is printed and also written into the response buffer as \texttt{"HTTP request failed: ..."}.
+    \item \texttt{write\_callback} guards against buffer overflow by truncating excessively large responses.
 \end{itemize}
 
 \section{Performance Considerations}
-The performance depends mainly on network latency between the client, proxy and HTTP server. MPI overhead is small for two processes, which makes the prototype suitable as a teaching example for combining MPI with external network services.
+The system uses two MPI processes and fixed-size buffers, so MPI overhead is minimal and memory management is straightforward. The dominant performance factor is the HTTP round-trip time to the webhook server. The additional safety checks in \texttt{write\_callback} add negligible overhead compared with network latency.
 
 \section{Conclusion}
-This MPI-based HTTP request system provides a simple way to send HTTP requests from a client to an HTTP server via a proxy. It demonstrates how MPI can be used for inter-process communication and how libcurl can be integrated into a distributed program. The system supports both interactive messages and file-based requests, making it flexible for testing and experimentation.
+This project implements an HTTP-over-MPI proxy using C, MPI, and libcurl. Rank~0 behaves as a client that can send either file contents or user-typed messages, while rank~1 acts as a proxy that forwards the request to an external HTTP service and relays the response. The design illustrates basic MPI communication, integration with a network API, and safe handling of variable-length responses.
 
 \section{References}
 \begin{itemize}
