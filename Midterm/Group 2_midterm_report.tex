@@ -3,7 +3,7 @@
 \usepackage[margin=1in]{geometry} % 1-inch margins
 \usepackage{tikz} % For the border
 \usetikzlibrary{calc} % For coordinate calculations
-\usepackage{graphicx} % For including the logo
+\usepackage{graphicx} % For including images
 \usepackage{lmodern} % Font package
 \usepackage{titlesec} % Section formatting
 \usepackage{fancyhdr} % Footer customization
@@ -20,19 +20,13 @@
 \usepackage{color}
 \usetikzlibrary{shapes.geometric, arrows}
 
-
+% --- Section Formatting ---
 \titleformat{\section}
   {\normalfont\Large\bfseries\raggedright}{\thesection}{1em}{}
 \titleformat{\subsection}
   {\normalfont\large\bfseries\raggedright}{\thesubsection}{1em}{}
 
-\tikzstyle{process} = [rectangle, minimum width=3cm, minimum height=1cm, text centered, draw=black, fill=blue!30]
-\tikzstyle{arrow} = [thick,->,>=stealth]
-
-\definecolor{dkgreen}{rgb}{0,0.6,0}
-\definecolor{gray}{rgb}{0.5,0.5,0.5}
-\definecolor{mauve}{rgb}{0.58,0,0.82}
-
+% --- Code Listing Style ---
 \definecolor{codegreen}{rgb}{0,0.6,0}
 \definecolor{codegray}{rgb}{0.5,0.5,0.5}
 \definecolor{codepurple}{rgb}{0.58,0,0.82}
@@ -58,10 +52,7 @@
     tabsize=2
 }
 
-\lstset{
-  style=mystyle,
-  language=C
-}
+\lstset{style=mystyle}
 
 \begin{document}
 
@@ -73,25 +64,22 @@
         ($(current page.north east) - (0.5in, 0.5in)$);
 \end{tikzpicture}
 
-
+% --- Title Page ---
 \begin{center}
     \vspace{1cm}
     {\Large \textbf{University of Science and Technology of Hanoi}}\\[0.75cm]
 
-    
     \includegraphics[width=0.5\textwidth]{usth.png}
 
     \vspace{1cm}
     {\large \textbf{Distributed System}}\\[0.5cm]
     {\large \textbf{Midterm report}}\\[0.5cm]
-
     
     \vspace{0.8cm}
     \rule{\textwidth}{0.75pt} \\[0.3cm]
     {\huge \textbf{HTTP over MPI}}\\[0.3cm]
     \rule{\textwidth}{0.75pt} \\[1.5cm]
 \end{center}
-
 
 \vspace{1cm}
 \noindent
@@ -115,101 +103,59 @@
     \textit{Hanoi, December 07 2025}
 \end{center}
 
+\clearpage
 \tableofcontents
 \clearpage
 
-\section{Introduction}
-This report details an MPI (Message Passing Interface)-based system designed to send an HTTP request from a client process to a server via a proxy process. The client can either send a predefined message or the contents of a file. The proxy forwards the request to a specified HTTP server, retrieves the response, and sends it back to the client. This system employs MPI for message passing, making it suitable for parallel computing environments.
+% --- Content ---
 
-\section{System Overview}
+\section{Introduction}
+This report details an MPI (Message Passing Interface)-based system designed to send an HTTP request from a client process to a server via a proxy process. The system addresses a common scenario where a client node within an internal network (without direct internet access) needs to communicate with external web services. By utilizing a Proxy node that has internet access, the client can offload the network request via MPI messages.
+
+\section{System Architecture}
+
+The system architecture consists of two main processes communicating within a local system, with one process acting as a gateway to the external internet.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{system architecture.png} 
+    \caption{System Architecture Diagram: Client sends MPI message to Proxy, which forwards it as HTTP POST.}
+    \label{fig:architecture}
+\end{figure}
+
 The system involves two key processes:
 \begin{itemize}
-    \item \textbf{Client Process}: Sends an HTTP request to the proxy, either as a predefined message or the contents of a file.
-    \item \textbf{Proxy Process}: Receives the HTTP request from the client, forwards it to an HTTP server (via libcurl), and sends the response back to the client.
+    \item \textbf{Client Process (Rank 0)}: Initiates the communication. It reads user input or file content and sends it to the proxy via MPI. It does not communicate directly with the internet.
+    \item \textbf{Proxy Process (Rank 1)}: Acts as an intermediary. It receives the MPI message, uses \texttt{libcurl} to POST the data to an external Webhook, and relays the server's response back to the client.
 \end{itemize}
 
-The communication between the client and the proxy is managed via MPI. The client sends an HTTP request message, and the proxy forwards it to the HTTP server. The proxy then returns the server's response to the client.
-
 \section{MPI (Message Passing Interface) Overview}
+MPI is a standardized and portable message-passing system designed for parallel computing. This system uses MPI for inter-process communication, specifically:
+\begin{itemize}
+    \item \textbf{MPI\_Send}: Used by the client to send the HTTP request payload to the proxy.
+    \item \textbf{MPI\_Recv}: Used by the proxy to receive the payload, and by the client to receive the final HTTP response.
+\end{itemize}
+
 \begin{table}[h!]
 \centering
 \begin{tabular}{|l|l|}
 \hline
-\textbf{Primitive}    & \textbf{Meaning}                                                                   \\ \hline
-\texttt{MPI\_bsend}    & Append outgoing message to a local send buffer                                    \\ \hline
-\texttt{MPI\_send}     & Send a message and wait until copied to local or remote buffer                    \\ \hline
-\texttt{MPI\_ssend}    & Send a message and wait until receipt starts                                      \\ \hline
-\texttt{MPI\_sendrecv} & Send a message and wait for reply                                                 \\ \hline
-\texttt{MPI\_isend}    & Pass reference to outgoing message, and continue                                  \\ \hline
-\texttt{MPI\_issend}   & Pass reference to outgoing message, and wait until receipt starts                \\ \hline
-\texttt{MPI\_recv}     & Receive a message; block if there is none                                         \\ \hline
-\texttt{MPI\_irecv}    & Check if there is an incoming message, but do not block                           \\ \hline
-\end{tabular}
-\caption{MPI Primitives and their Meanings}
-\label{table:mpi_primitives}
-\end{table}
-
-MPI is a standardized and portable message-passing system designed for parallel computing. It enables processes to communicate with each other by sending and receiving messages. This system uses MPI for inter-process communication, specifically:
-\begin{itemize}
-    \item \textbf{MPI\_Send}: Used by the client to send the HTTP request to the proxy.
-    \item \textbf{MPI\_Recv}: Used by the proxy to receive the HTTP request from the client, and by the client to receive the HTTP response from the proxy.
-\end{itemize}
-
-\subsection{Key MPI Functions Used}
-\begin{itemize}
-    \item \textbf{MPI\_Init}: Initializes the MPI environment.
-    \item \textbf{MPI\_Comm\_rank}: Determines the rank of the process in the communicator.
-    \item \textbf{MPI\_Comm\_size}: Determines the size of the communicator (number of processes).
-    \item \textbf{MPI\_Send} and \textbf{MPI\_Recv}: Used for sending and receiving data.
-\end{itemize}
-
-\begin{table}[h!]
-\centering
-\begin{tabular}{|p{4cm}|p{10cm}|}
-\hline
 \textbf{MPI Function}  & \textbf{Purpose}                                                                                   \\ \hline
-\texttt{MPI\_Init}     & Initializes the MPI environment.                                                                   \\ \hline
-\texttt{MPI\_Comm\_rank} & Determines the rank (ID) of the current process within the MPI communicator.                      \\ \hline
-\texttt{MPI\_Comm\_size} & Determines the total number of processes in the MPI communicator.                                 \\ \hline
-\texttt{MPI\_Send}     & Sends a message (data) from one process to another.                                                \\ \hline
-\texttt{MPI\_Recv}     & Receives a message (data) from another process.                                                    \\ \hline
-\texttt{MPI\_Abort}    & Aborts all MPI processes in the communicator if an error occurs.                                   \\ \hline
-\texttt{MPI\_Finalize} & Terminates the MPI environment, cleaning up resources used by MPI.                                 \\ \hline
+\texttt{MPI\_Init}     & Initializes the MPI environment. \\ \hline
+\texttt{MPI\_Comm\_rank} & Determines the rank (ID) of the current process. \\ \hline
+\texttt{MPI\_Send}     & Sends a message (data) from one process to another. \\ \hline
+\texttt{MPI\_Recv}     & Receives a message (data) from another process. \\ \hline
+\texttt{MPI\_Finalize} & Terminates the MPI environment. \\ \hline
 \end{tabular}
-\caption{Common MPI Functions and their Purposes}
-\label{table:mpi_functions}
+\caption{Key MPI Functions Used}
 \end{table}
 
-\section{System Architecture}
+\section{Code Structure and Implementation}
 
-The system architecture consists of two processes:
-\begin{itemize}
-    \item \textbf{Client Process (Rank 0)}: Initiates the communication by sending an HTTP request to the proxy. It can either provide the message directly or specify a file to be sent.
-    \item \textbf{Proxy Process (Rank 1)}: Acts as an intermediary between the client and the HTTP server. It forwards the client's request to the server and sends back the server's response to the client.
-\end{itemize}
+The implementation uses C with the MPI library for process communication and \texttt{libcurl} for HTTP requests.
 
-\subsection{Client Process}
-\begin{itemize}
-    \item \textbf{Role}: The client process is responsible for sending the HTTP request and receiving the response.
-    \item \textbf{Input}: The client can either input a message manually or specify a file from which the content will be sent.
-    \item \textbf{Output}: The HTTP response from the server, which is received from the proxy.
-\end{itemize}
-
-\subsection{Proxy Process}
-\begin{itemize}
-    \item \textbf{Role}: The proxy process receives the request from the client, forwards it to the HTTP server (using libcurl), and then sends the response back to the client.
-    \item \textbf{Input}: The HTTP request from the client.
-    \item \textbf{Output}: The HTTP response from the server, which is sent back to the client.
-\end{itemize}
-
-\section{Code Structure and Explanation}
-
-\begin{lstlisting}[language=bash]
-mpicc -o http_proxy_mpi http_proxy_mpi.c -lcurl
-mpirun -np 2 ./http_proxy_mpi test.txt
-\end{lstlisting}
-
-\begin{lstlisting}[language=C]
+\subsection{Full Source Code}
+\begin{lstlisting}[language=C, caption={http\_proxy\_mpi.c}]
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -218,16 +164,21 @@ mpirun -np 2 ./http_proxy_mpi test.txt
 
 #define BUFFER_SIZE 4096
 
+// --- NEW FUNCTION: Callback to safely receive data from Web Server ---
 size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
     char *response_buffer = (char *)userp;
 
+    // Check to avoid buffer overflow
     if (realsize >= BUFFER_SIZE) {
         printf("Warning: Response too large, truncating...\n");
         realsize = BUFFER_SIZE - 1;
     }
 
+    // Copy received data to response variable
     memcpy(response_buffer, contents, realsize);
+    
+    // Add null terminator
     response_buffer[realsize] = 0;
 
     return realsize;
@@ -244,18 +195,22 @@ void send_http_request(const char* request, char* response) {
         return;
     }
 
-    curl_easy_setopt(curl, CURLOPT_URL,
-        "https://webhook.site/d5ea60ce-050e-47c7-b77c-bd16907f0665");
+    // Configure the HTTP request
+    // Note: URL from webhook.site for testing
+    curl_easy_setopt(curl, CURLOPT_URL, "https://webhook.site/d5ea60ce-050e-47c7-b77c-bd16907f0665");
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request);
+
+    // --- UPDATED LOGIC ---
+    // Use write_callback instead of direct memcpy for safety
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
+    // --------------------
 
+    // Perform the HTTP request
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        fprintf(stderr, "curl_easy_perform() failed: %s\n",
-                curl_easy_strerror(res));
-        sprintf(response, "HTTP request failed: %s",
-                curl_easy_strerror(res));
+        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        sprintf(response, "HTTP request failed: %s", curl_easy_strerror(res));
     }
 
     curl_easy_cleanup(curl);
@@ -269,7 +224,7 @@ void read_file_to_buffer(const char* filename, char* buffer) {
     }
 
     size_t bytesRead = fread(buffer, 1, BUFFER_SIZE - 1, file);
-    buffer[bytesRead] = '\0';
+    buffer[bytesRead] = '\0';  // Null-terminate the string
     fclose(file);
 }
 
@@ -286,38 +241,42 @@ int main(int argc, char** argv) {
     }
 
     if (world_rank == 0) {
+        // --- CLIENT PROCESS ---
         char http_request[BUFFER_SIZE] = {0};
         
         if (argc == 2) {
+            // Read from a file
             read_file_to_buffer(argv[1], http_request);
             printf("Client is sending file content: %s\n", http_request);
         } else {
-            printf("Enter a message to send:\n");
-            fflush(stdout);
+            // Default message input
+            printf("Enter a message to send: \n");
+            fflush(stdout); // IMPORTANT: Flush stdout to display prompt immediately
+            
             fgets(http_request, BUFFER_SIZE, stdin);
-            http_request[strcspn(http_request, "\n")] = 0;
+            http_request[strcspn(http_request, "\n")] = 0;  // Remove trailing newline
         }
 
-        MPI_Send(http_request, strlen(http_request) + 1,
-                 MPI_CHAR, 1, 0, MPI_COMM_WORLD);
+        MPI_Send(http_request, strlen(http_request) + 1, MPI_CHAR, 1, 0, MPI_COMM_WORLD);
 
+        // Receive HTTP response from proxy
         char http_response[BUFFER_SIZE];
-        MPI_Recv(http_response, BUFFER_SIZE, MPI_CHAR,
-                 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(http_response, BUFFER_SIZE, MPI_CHAR, 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         printf("Client received response: %s\n", http_response);
 
     } else if (world_rank == 1) {
+        // --- PROXY PROCESS ---
         char http_request[BUFFER_SIZE];
-        MPI_Recv(http_request, BUFFER_SIZE, MPI_CHAR,
-                 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(http_request, BUFFER_SIZE, MPI_CHAR, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
         printf("Proxy received request: %s\n", http_request);
 
+        // Forward the request to the HTTP server
         char http_response[BUFFER_SIZE] = {0};
         send_http_request(http_request, http_response);
 
-        MPI_Send(http_response, strlen(http_response) + 1,
-                 MPI_CHAR, 0, 0, MPI_COMM_WORLD);
+        // Send the response back to the client
+        MPI_Send(http_response, strlen(http_response) + 1, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
     }
 
     MPI_Finalize();
@@ -325,63 +284,96 @@ int main(int argc, char** argv) {
 }
 \end{lstlisting}
 
-\subsection{Header Files and Definitions}
-The program includes:
+\subsection{Implementation Visuals}
+
+Below are the key logic blocks captured from the source code.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{rank0(client).png}
+    \caption{Client Logic (Rank 0): Handling input and sending MPI message.}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{rank1(proxy).png}
+    \caption{Proxy Logic (Rank 1): Receiving MPI message, forwarding via HTTP, and returning response.}
+\end{figure}
+
+\section{Deployment and Usage Guideline}
+
+\subsection{Prerequisites}
+To compile and run this software, the following dependencies are required:
 \begin{itemize}
-    \item \texttt{mpi.h}: MPI primitives for distributed communication.
-    \item \texttt{stdio.h}, \texttt{stdlib.h}, \texttt{string.h}: standard C I/O and utilities.
-    \item \texttt{curl/curl.h}: libcurl API for HTTP requests.
-\end{itemize}
-\texttt{BUFFER\_SIZE} defines the maximum size of request and response buffers. A custom callback \texttt{write\_callback} is defined to safely receive HTTP response data without overflowing the buffer.
-
-\subsection{The \texttt{write\_callback} and \texttt{send\_http\_request} Functions}
-\texttt{write\_callback} is registered as the libcurl write function. It computes the size of the incoming chunk, truncates it if necessary, copies it into the response buffer, and appends a null terminator.
-
-\texttt{send\_http\_request} initializes a CURL handle, sets the webhook URL and POST data, registers \texttt{write\_callback}, performs the HTTP request, reports errors, and cleans up.
-
-\subsection{The \texttt{read\_file\_to\_buffer} Function}
-\texttt{read\_file\_to\_buffer} opens a file, reads up to \texttt{BUFFER\_SIZE - 1} bytes, null-terminates the result, and closes the file. It is used when the client is launched with a filename as command-line argument.
-
-\subsection{The \texttt{main} Function}
-The \texttt{main} function initializes MPI, checks that at least two processes exist, and then runs the client on rank~0 and the proxy on rank~1.
-
-\section{Flow of Execution}
-
-\subsection{Client Process (Rank 0)}
-\begin{itemize}
-    \item If a filename is given (\texttt{argc == 2}), the client loads the file content into \texttt{http\_request}; otherwise it prompts the user to enter a message and flushes \texttt{stdout} so the prompt is visible immediately.
-    \item The client sends the request to rank~1 with \texttt{MPI\_Send}.
-    \item The client waits for the response from rank~1 with \texttt{MPI\_Recv} and prints it.
+    \item \textbf{GCC Compiler}: Standard C compiler.
+    \item \textbf{MPI Implementation}: MPICH or OpenMPI.
+    \item \textbf{libcurl}: The multiprotocol file transfer library.
 \end{itemize}
 
-\subsection{Proxy Process (Rank 1)}
-\begin{itemize}
-    \item The proxy receives the request from rank~0.
-    \item It calls \texttt{send\_http\_request}, which forwards the payload to the configured webhook URL and stores the HTTP response in \texttt{http\_response}.
-    \item The proxy sends the response back to the client via \texttt{MPI\_Send}.
-\end{itemize}
+\textbf{Installation on Kali Linux:}
+\begin{lstlisting}[language=bash]
+sudo apt update
+sudo apt install build-essential mpich libcurl4-openssl-dev
+\end{lstlisting}
 
-\section{Error Handling}
-Error handling occurs at several levels:
-\begin{itemize}
-    \item If \texttt{world\_size < 2}, the program prints an error and calls \texttt{MPI\_Abort}.
-    \item If a file cannot be opened in \texttt{read\_file\_to\_buffer}, an error message is printed to \texttt{stderr}.
-    \item If libcurl cannot be initialized, \texttt{send\_http\_request} writes a descriptive error into the response buffer.
-    \item If \texttt{curl\_easy\_perform} fails, the libcurl error string is printed and also written into the response buffer as \texttt{"HTTP request failed: ..."}.
-    \item \texttt{write\_callback} guards against buffer overflow by truncating excessively large responses.
-\end{itemize}
+\subsection{Compilation}
+Use the MPI wrapper compiler \texttt{mpicc} and link the curl library:
+\begin{lstlisting}[language=bash]
+mpicc -o http_proxy_mpi http_proxy_mpi.c -lcurl
+\end{lstlisting}
 
-\section{Performance Considerations}
-The system uses two MPI processes and fixed-size buffers, so MPI overhead is minimal and memory management is straightforward. The dominant performance factor is the HTTP round-trip time to the webhook server. The additional safety checks in \texttt{write\_callback} add negligible overhead compared with network latency.
+\subsection{Usage Manual}
+The program supports two modes of operation:
+
+\textbf{1. Interactive Mode (Default):}
+Run the program without arguments. The client will prompt you to type a message.
+\begin{lstlisting}[language=bash]
+mpirun -np 2 ./http_proxy_mpi
+# Then type your message when prompted
+\end{lstlisting}
+
+\textbf{2. File Mode:}
+Run the program with a filename argument. The client will read the file content and send it.
+\begin{lstlisting}[language=bash]
+mpirun -np 2 ./http_proxy_mpi test.txt
+\end{lstlisting}
+
+\section{Experimental Results}
+The system was tested by sending a custom message "hello world" from the client.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{result.png}
+    \caption{Execution Result: The terminal shows the interaction between Client and Proxy, while the Webhook.site dashboard confirms the receipt of the POST request.}
+    \label{fig:result}
+\end{figure}
+
+As shown in Figure \ref{fig:result}:
+\begin{enumerate}
+    \item The Client (Rank 0) prompts for input: "hello world".
+    \item The Proxy (Rank 1) receives the request via MPI.
+    \item The Webhook.site interface (background) logs the incoming POST request with the content "hello world".
+    \item The Client receives the URL response from the Proxy, completing the cycle.
+\end{enumerate}
+
+\section{Team Contribution}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|p{6cm}|p{8cm}|}
+\hline
+\textbf{Member} & \textbf{Contribution} \\ \hline
+Pham Hoang Viet & System Architect, Core Logic Implementation, Report Writing \\ \hline
+Nghiem Xuan Son & Deployment Testing, MPI Configuration, Slide Making \\ \hline
+Vu Xuan Thai & Core Logic Implementation, Deployment Testing, Final Editing \\ \hline
+Hoang Minh Quan & MPI Configuration, Code Review, Report Writing\\ \hline
+Nguyen Ngoc Quang & MPI Configuration, Slide Making, Report Fixing \\ \hline
+Pham Huu Minh & Code Review, Testing , Slide Making  \\ \hline
+Tran Vu Cong Minh & Code Review, Testing, Final Editing \\ \hline
+\end{tabular}
+\caption{Roles and Contributions of Team Members}
+\end{table}
 
 \section{Conclusion}
-This project implements an HTTP-over-MPI proxy using C, MPI, and libcurl. Rank~0 behaves as a client that can send either file contents or user-typed messages, while rank~1 acts as a proxy that forwards the request to an external HTTP service and relays the response. The design illustrates basic MPI communication, integration with a network API, and safe handling of variable-length responses.
-
-\section{References}
-\begin{itemize}
-    \item \href{https://github.com/mpitutorial/mpitutorial/tree/gh-pages/tutorials/}{https://github.com/mpitutorial/mpitutorial/tree/gh-pages/tutorials/}
-    \item \href{https://mpitutorial.com/tutorials/}{https://mpitutorial.com/tutorials/}
-    \item \href{https://curc.readthedocs.io/en/latest/programming/MPI-C.html}{https://curc.readthedocs.io/en/latest/programming/MPI-C.html}
-\end{itemize}
+This project successfully demonstrates an HTTP-over-MPI proxy using C. Rank 0 behaves as a client that can send either file contents or user-typed messages, while rank 1 acts as a proxy that forwards the request to an external HTTP service. The design illustrates basic MPI communication combined with network programming, enabling internal nodes to interact with web services securely and efficiently.
 
 \end{document}
